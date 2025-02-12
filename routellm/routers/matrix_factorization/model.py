@@ -1,7 +1,7 @@
 import torch
 from huggingface_hub import PyTorchModelHubMixin
 
-from routellm.routers.similarity_weighted.utils import OPENAI_CLIENT
+from routellm.routers.similarity_weighted.utils import embedding_llm
 
 MODEL_IDS = {
     "RWKV-4-Raven-14B": 0,
@@ -85,7 +85,7 @@ class MFModel(torch.nn.Module, PyTorchModelHubMixin):
         self.use_proj = use_proj
         self.P = torch.nn.Embedding(num_models, dim)
 
-        self.embedding_model = "text-embedding-3-small"
+        self.embedding_model = embedding_llm
 
         if self.use_proj:
             self.text_proj = torch.nn.Sequential(
@@ -109,15 +109,17 @@ class MFModel(torch.nn.Module, PyTorchModelHubMixin):
         model_embed = self.P(model_id)
         model_embed = torch.nn.functional.normalize(model_embed, p=2, dim=1)
 
-        prompt_embed = (
-            OPENAI_CLIENT.embeddings.create(input=[prompt], model=self.embedding_model)
-            .data[0]
-            .embedding
-        )
+        prompt_embed = self.embedding_model._get_text_embedding(prompt)
         prompt_embed = torch.tensor(prompt_embed, device=self.get_device())
-        prompt_embed = self.text_proj(prompt_embed)
+        print('this is is model.embd', model_embed.tolist()[0])
+        print('this is prompt embed2', prompt_embed.tolist()[0])
 
-        return self.classifier(model_embed * prompt_embed).squeeze()
+
+
+        if self.use_proj:
+            prompt_embed = self.text_proj(prompt_embed)
+
+        return self.classifier(model_embed.tolist() * prompt_embed.tolist()[0]).squeeze()
 
     @torch.no_grad()
     def pred_win_rate(self, model_a, model_b, prompt):

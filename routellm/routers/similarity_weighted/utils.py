@@ -4,11 +4,34 @@ import os
 
 import numpy as np
 import pandas as pd
-from openai import OpenAI
+import openai
+from openai import OpenAI, AzureOpenAI
+from llama_index.core import Settings
+
+from llama_index.embeddings.azure_openai import AzureOpenAIEmbedding
 from sklearn.linear_model import LogisticRegression
 
+# Load the VIKTOR_APP_SECRET environment variable
+viktor_app_secret: str = os.environ.get("VIKTOR_APP_SECRET", "")
+if not viktor_app_secret:
+    raise ValueError("VIKTOR_APP_SECRET is not set.")
+
+# Split the secret into its components
+API_KEY, ENDPOINT, DEPLOYMENT_NAME, EMBEDDING_DEPLOYMENT_NAME, API_VERSION = viktor_app_secret.split("|")
+
+# Set the global service context for embeddings
+embedding_llm = AzureOpenAIEmbedding(
+    model="text-embedding-ada-002",
+    deployment_name=EMBEDDING_DEPLOYMENT_NAME,
+    api_key=API_KEY,  # Use the extracted API_KEY
+    azure_endpoint=f"https://{ENDPOINT}.openai.azure.com/",
+    api_version=API_VERSION,
+    max_retries=10,
+    embed_batch_size=1,
+)
+Settings.embed_model = embedding_llm
+
 choices = ["A", "B", "C", "D"]
-OPENAI_CLIENT = OpenAI()
 
 
 def compute_tiers(model_ratings, num_tiers):

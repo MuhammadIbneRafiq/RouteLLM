@@ -16,7 +16,7 @@ from routellm.routers.causal_llm.llm_utils import (
 from routellm.routers.causal_llm.model import CausalLLMClassifier
 from routellm.routers.matrix_factorization.model import MODEL_IDS, MFModel
 from routellm.routers.similarity_weighted.utils import (
-    OPENAI_CLIENT,
+    embedding_llm,
     compute_elo_mle_with_tie,
     compute_tiers,
     preprocess_battles,
@@ -178,15 +178,7 @@ class SWRankingRouter(Router):
         self,
         prompt,
     ):
-        prompt_emb = (
-            (
-                OPENAI_CLIENT.embeddings.create(
-                    input=[prompt], model=self.embedding_model
-                )
-            )
-            .data[0]
-            .embedding
-        )
+        prompt_emb = embedding_llm
         similarities = np.dot(self.arena_conv_embedding, prompt_emb) / (
             np.linalg.norm(self.arena_conv_embedding, axis=1)
             * np.linalg.norm(prompt_emb)
