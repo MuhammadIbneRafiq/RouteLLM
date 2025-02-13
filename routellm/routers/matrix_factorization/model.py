@@ -1,6 +1,6 @@
 import torch
 from huggingface_hub import PyTorchModelHubMixin
-
+import logging
 from routellm.routers.similarity_weighted.utils import embedding_llm
 
 MODEL_IDS = {
@@ -71,6 +71,7 @@ MODEL_IDS = {
 }
 
 
+
 class MFModel(torch.nn.Module, PyTorchModelHubMixin):
     def __init__(
         self,
@@ -84,17 +85,15 @@ class MFModel(torch.nn.Module, PyTorchModelHubMixin):
         self._name = "TextMF"
         self.use_proj = use_proj
         self.P = torch.nn.Embedding(num_models, dim)
-
         self.embedding_model = embedding_llm
+        self.prompt_proj = torch.nn.Linear(1536, dim)
 
         if self.use_proj:
             self.text_proj = torch.nn.Sequential(
                 torch.nn.Linear(text_dim, dim, bias=False)
             )
         else:
-            assert (
-                text_dim == dim
-            ), f"text_dim {text_dim} must be equal to dim {dim} if not using projection"
+            assert text_dim == dim, f"text_dim {text_dim} must be equal to dim {dim} if not using projection"
 
         self.classifier = torch.nn.Sequential(
             torch.nn.Linear(dim, num_classes, bias=False)
@@ -103,29 +102,64 @@ class MFModel(torch.nn.Module, PyTorchModelHubMixin):
     def get_device(self):
         return self.P.weight.device
 
-    def forward(self, model_id, prompt):
-        model_id = torch.tensor(model_id, dtype=torch.long).to(self.get_device())
-
-        model_embed = self.P(model_id)
-        model_embed = torch.nn.functional.normalize(model_embed, p=2, dim=1)
-
-        prompt_embed = self.embedding_model._get_text_embedding(prompt)
-        prompt_embed = torch.tensor(prompt_embed, device=self.get_device())
-        print('this is is model.embd', model_embed.tolist()[0])
-        print('this is prompt embed2', prompt_embed.tolist()[0])
-
-
-
-        if self.use_proj:
-            prompt_embed = self.text_proj(prompt_embed)
-
-        return self.classifier(model_embed.tolist() * prompt_embed.tolist()[0]).squeeze()
+    def forward(self, model_ids, prompt):
+        try:
+            # Convert model_ids to tensor and move to correct device
+            model_ids = torch.tensor(model_ids, dtype=torch.long).to(self.get_device())
+            
+            # Get model embeddings
+            model_embed = self.P(model_ids)
+            model_embed = torch.nn.functional.normalize(model_embed, p=2, dim=1)
+            
+            # Get prompt embedding and handle potential None response
+            prompt_embed = self.embedding_model._get_text_embedding(prompt)
+            if prompt_embed is None:
+                raise ValueError("Failed to get embedding from Azure OpenAI API")
+            
+            # Convert prompt embedding to tensor if necessary
+            if isinstance(prompt_embed, list):
+                prompt_embed = torch.tensor(prompt_embed, device=self.get_device())
+            elif isinstance(prompt_embed, torch.Tensor):
+                prompt_embed = prompt_embed.to(self.get_device())
+            
+            # Ensure prompt embedding has correct shape
+            if prompt_embed.dim() == 1:
+                prompt_embed = prompt_embed.unsqueeze(0)
+            
+            # Create a single prompt embedding for all models
+            prompt_embed = self.prompt_proj(prompt_embed)
+            prompt_embed = prompt_embed.repeat(len(model_ids), 1)
+            
+            # Ensure both embeddings are normalized
+            prompt_embed = torch.nn.functional.normalize(prompt_embed, p=2, dim=1)
+            
+            # Verify shapes match before proceeding
+            if model_embed.shape != prompt_embed.shape:
+                raise ValueError(f"Shape mismatch after processing: model_embed {model_embed.shape} vs prompt_embed {prompt_embed.shape}")
+            
+            # Calculate difference and classify
+            return self.classifier(model_embed - prompt_embed).squeeze()
+            
+        except Exception as e:
+            logging.error(f"Error in forward pass: {str(e)}")
+            raise
 
     @torch.no_grad()
     def pred_win_rate(self, model_a, model_b, prompt):
-        logits = self.forward([model_a, model_b], prompt)
-        winrate = torch.sigmoid(logits[0] - logits[1]).item()
-        return winrate
+        try:
+            if prompt is None or not isinstance(prompt, str):
+                raise ValueError("Invalid prompt provided")
+            
+            logits = self.forward([model_a, model_b], prompt)
+            if logits is None:
+                raise ValueError("Failed to compute logits")
+                
+            winrate = torch.sigmoid(logits[0] - logits[1]).item()
+            return winrate
+            
+        except Exception as e:
+            logging.error(f"Error in pred_win_rate: {str(e)}")
+            raise
 
     def load(self, path):
         self.load_state_dict(torch.load(path))

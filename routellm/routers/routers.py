@@ -83,10 +83,15 @@ class CausalLLMRouter(Router):
         classifier_message = hf_hub_download(
             repo_id=checkpoint_path, filename="classifier_ft_v5.txt"
         )
+        print('sys and classms', system_message, classifier_message)
         with open(system_message, "r") as pr:
             system_message = pr.read()
+            print('sys and classms AFTR', system_message)
+
         with open(classifier_message, "r") as pr:
             classifier_message = pr.read()
+            print('sys and classms AFTR', classifier_message)
+
         self.to_openai_messages = functools.partial(
             to_openai_api_messages, system_message, classifier_message
         )
@@ -222,6 +227,7 @@ class MatrixFactorizationRouter(Router):
             text_dim=text_dim,
             num_classes=num_classes,
             use_proj=use_proj,
+            force_download=True
         )
         self.model = self.model.eval().to(device)
         self.strong_model_id = MODEL_IDS[strong_model]
@@ -231,6 +237,7 @@ class MatrixFactorizationRouter(Router):
         winrate = self.model.pred_win_rate(
             self.strong_model_id, self.weak_model_id, prompt
         )
+        print('this is win rate for mf router', winrate)
         return winrate
 
 
